@@ -16,7 +16,7 @@ use macos::kill_processes_by_port;
 
 use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
-use log::error;
+use log::{error, Level};
 use std::process::exit;
 
 /// The `KillPortArgs` struct is used to parse command-line arguments for the
@@ -35,6 +35,17 @@ struct KillPortArgs {
     /// A verbosity flag to control the level of logging output.
     #[command(flatten)]
     verbose: Verbosity<WarnLevel>,
+    
+    /// Show names and PIDs of processes that would be killed but don't actually kill them.
+    #[arg(short = 'd', long = "dry-run", default_value_t = false)]
+    dry_run: bool
+}
+
+/// Indicates the result of the kill operation
+pub enum KillResult {
+    Killed,
+    NotKilled,
+    DryRun
 }
 
 /// The `main` function is the entry point of the `killport` utility.
@@ -46,11 +57,17 @@ fn main() {
     let args = KillPortArgs::parse();
 
     // Set up logging environment
-    let log_level = args
+    let mut log_level = args
         .verbose
         .log_level()
         .map(|level| level.to_level_filter())
         .unwrap();
+    
+    // If dry-run is enabled, set log level to INFO so we can print out
+    // the pids
+    if args.dry_run {
+        log_level = Level::Info.to_level_filter()
+    }
 
     env_logger::Builder::new()
         .format_module_path(log_level == log::LevelFilter::Trace)
@@ -61,12 +78,18 @@ fn main() {
 
     // Attempt to kill processes listening on specified ports
     for port in args.ports {
-        match kill_processes_by_port(port) {
+        match kill_processes_by_port(port, args.dry_run) {
             Ok(killed) => {
-                if killed {
-                    println!("Successfully killed process listening on port {}", port);
-                } else {
-                    println!("No processes found using port {}", port);
+                match killed {
+                    KillResult::Killed => {
+                        println!("Successfully killed process listening on port {}", port);
+                    },
+                    KillResult::NotKilled => {
+                        println!("No processes found using port {}", port);
+                    },
+                    KillResult::DryRun => {
+                        println!("This is a dry-run, no processes were killed.")
+                    }
                 }
             }
             Err(err) => {

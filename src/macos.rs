@@ -9,6 +9,7 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::ffi::CStr;
 use std::io;
+use crate::KillResult;
 
 /// Collect information about all processes.
 ///
@@ -38,9 +39,9 @@ fn collect_proc() -> Vec<TaskAllInfo> {
 /// # Returns
 ///
 /// A `Result` containing a boolean value. If true, at least one process was killed; otherwise, false.
-pub fn kill_processes_by_port(port: u16) -> Result<bool, io::Error> {
+pub fn kill_processes_by_port(port: u16, dry_run: bool) -> Result<KillResult, io::Error> {
     let process_infos = collect_proc();
-    let mut killed = false;
+    let mut killed = KillResult::NotKilled;
 
     for task in process_infos {
         let pid = task.pbsd.pbi_pid as i32;
@@ -78,6 +79,10 @@ pub fn kill_processes_by_port(port: u16) -> Result<bool, io::Error> {
         }
 
         if kill_process {
+            if dry_run {
+                info!("Found process with PID {} listening on port {}", pid, port);
+                return Ok(KillResult::DryRun)
+            }
             debug!("Found process with PID {}", pid);
             let pid = Pid::from_raw(pid);
             let cmd = unsafe {
@@ -92,7 +97,7 @@ pub fn kill_processes_by_port(port: u16) -> Result<bool, io::Error> {
                 info!("Killing process with PID {}", pid);
                 match signal::kill(pid, Signal::SIGKILL) {
                     Ok(_) => {
-                        killed = true;
+                        killed = KillResult::Killed;
                     }
                     Err(e) => {
                         return Err(io::Error::new(

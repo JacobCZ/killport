@@ -5,6 +5,7 @@ use procfs::process::FDTarget;
 use std::io;
 use std::io::Error;
 use std::path::Path;
+use crate::KillResult;
 
 /// Attempts to kill processes listening on the specified `port`.
 ///
@@ -15,18 +16,27 @@ use std::path::Path;
 /// # Arguments
 ///
 /// * `port` - A u16 value representing the port number.
-pub fn kill_processes_by_port(port: u16) -> Result<bool, Error> {
+pub fn kill_processes_by_port(port: u16, dry_run: bool) -> Result<KillResult, Error> {
     let mut killed_any = false;
 
     let target_inodes = find_target_inodes(port);
 
     if !target_inodes.is_empty() {
         for target_inode in target_inodes {
-            killed_any |= kill_processes_by_inode(target_inode)?;
+            killed_any |= kill_processes_by_inode(target_inode, dry_run)?;
         }
     }
 
-    Ok(killed_any)
+    if dry_run {
+        Ok(KillResult::DryRun)
+    } else {
+        if killed_any {
+            Ok(KillResult::Killed)
+        }
+        else {
+            Ok(KillResult::NotKilled)
+        }
+    }
 }
 
 /// Finds the inodes associated with the specified `port`.
@@ -77,7 +87,7 @@ fn find_target_inodes(port: u16) -> Vec<u64> {
 /// # Arguments
 ///
 /// * `target_inode` - A u64 value representing the target inode.
-fn kill_processes_by_inode(target_inode: u64) -> Result<bool, Error> {
+fn kill_processes_by_inode(target_inode: u64, dry_run: bool) -> Result<bool, Error> {
     let processes = procfs::process::all_processes().unwrap();
     let mut killed_any = false;
 
@@ -87,6 +97,10 @@ fn kill_processes_by_inode(target_inode: u64) -> Result<bool, Error> {
             for fd in fds {
                 if let FDTarget::Socket(inode) = fd.unwrap().target {
                     if target_inode == inode {
+                        if dry_run {
+                            info!("Found process with PID {}", process.pid);
+                            return Ok(false)
+                        }
                         debug!("Found process with PID {}", process.pid);
 
                         if let Ok(cmdline) = process.cmdline() {
